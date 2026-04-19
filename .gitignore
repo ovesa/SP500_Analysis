@@ -1,4 +1,7 @@
-*.pyc
+venv/
 __pycache__/
+*.pyc
 .DS_Store
 *.pbix
+data/raw/
+data/cleaned/
