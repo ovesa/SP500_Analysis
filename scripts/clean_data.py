@@ -13,62 +13,40 @@ def load_raw(ticker):
     return df
 
 
-def inspect(df, ticker):
-    print(f"\n {ticker} Inspection")
-    print(f"Shape: {df.shape[0]} rows x {df.shape[1]} cols")
-    print(f"Date range: {df.index.min().date()} to {df.index.max().date()}")
-    print(f"Nulls:\n{df.isnull().sum()}")
-    print(f"Close stats:\n{df['Close'].describe().round(2)}")
-
-
 def clean(df, ticker):
-    print(f"\nCleaning {ticker}")
+    print(f"Cleaning {ticker}...")
 
+    # Keep only Close price
     df = df[["Close"]].copy()
     df.columns = ["price"]
 
-    # Ensure datetime index
+    # Clean index
     df.index = pd.to_datetime(df.index)
     df.index.name = "date"
 
-    # Drop nulls
-    before = len(df)
+    # Drop nulls and duplicates
     df.dropna(inplace=True)
-    dropped = before - len(df)
-    print(f"Nulls dropped: {dropped}")
-
-    # Remove duplicate dates
-    dupes = df.index.duplicated().sum()
-    if dupes > 0:
-        df = df[~df.index.duplicated(keep="first")]
-    print(f"Duplicate dates: {dupes}")
-
-    # Sort ascending
+    df = df[~df.index.duplicated(keep="first")]
     df.sort_index(inplace=True)
 
-    # Flag big single-day moves (>20%)
-    df["daily_return"] = df["price"].pct_change()
-    big_moves = df[df["daily_return"].abs() > 0.20]
-    if not big_moves.empty:
-        print(f"Warning: {len(big_moves)} day(s) with >20% move:")
-        print(big_moves)
-    else:
-        print("No suspicious price moves found")
-
-    # Drop helper column
-    df.drop(columns=["daily_return"], inplace=True)
-
-    # Add ticker label
+    # Add ticker
     df["ticker"] = ticker
 
-    print(f"Final shape:       {df.shape[0]} rows")
+    # Daily return (pct change, first row = 0)
+    df["daily_return"] = df["price"].pct_change().fillna(0)
+
+    # Indexed price (rebased to 100 at start)
+    df["indexed_price"] = df["price"] / df["price"].iloc[0] * 100
+
+    # Annualized volatility (rolling 252-day, forward filled)
+    df["annualized_volatility"] = (
+        df["daily_return"]
+        .rolling(window=252, min_periods=60)
+        .std() * (252 ** 0.5)
+    )
+
+    print(f"  {len(df)} rows | vol={df['daily_return'].std() * (252**0.5):.3f} | last price={df['price'].iloc[-1]:.2f}")
     return df
-
-
-def save(df, ticker):
-    path = f"data/cleaned/{ticker}_clean.csv"
-    df.to_csv(path)
-    print(f"Saved at the following path: {path}")
 
 
 if __name__ == "__main__":
@@ -76,18 +54,23 @@ if __name__ == "__main__":
 
     for ticker in tickers:
         df_raw = load_raw(ticker)
-        inspect(df_raw, ticker)
         df_clean = clean(df_raw, ticker)
-        save(df_clean, ticker)
         all_clean.append(df_clean)
 
-    # Build combined file
-    print("Building combined file...")
-    combined_file = pd.concat(all_clean)
-    combined_path = "data/cleaned/all_sectors_combined.csv"
-    combined_file.to_csv(combined_path)
-    print(f"Saved at the following path: {combined_path}")
-    print(f"Combined shape: {combined_file.shape}")
+    # Combine all tickers
+    combined = pd.concat(all_clean)
+    combined = combined.reset_index()
+    combined = combined[["date", "price", "ticker", "daily_return", "indexed_price", "annualized_volatility"]]
+
+    # Save
+    out_path = "data/cleaned/all_sectors_combined.csv"
+    combined.to_csv(out_path, index=False)
+
+    print(f"\nSaved to {out_path}")
+    print(f"Shape: {combined.shape}")
     print("\nRow counts per ticker:")
-    print(combined_file["ticker"].value_counts())
+    print(combined["ticker"].value_counts().sort_index())
+    print(f"\nColumns: {list(combined.columns)}")
+    print("\nSample:")
+    print(combined.head())
     print("\nCleaning complete.")
